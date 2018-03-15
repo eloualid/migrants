@@ -22,6 +22,13 @@ if(.Platform$OS.type == "windows") {
   Sys.getenv("R_ZIPCMD", "zip")
 }
 
+Unaccent <- function(text) {
+  text <- gsub("['`^~\"]", " ", text)
+  text <- iconv(text, to="ASCII//TRANSLIT//IGNORE")
+  text <- gsub("['`^~\"]", "", text)
+  return(text)
+}
+
 usePackage("rtweet")
 #usePackage("httpuv")
 usePackage("tidyverse")
@@ -30,6 +37,9 @@ usePackage("devtools")
 devtools::install_github("ThinkRstat/stopwords")
 usePackage("stopwords")
 usePackage("scales")
+usePackage("readxl")
+usePackage("wordcloud")
+usePackage("SnowballC")
 
 theme_set(theme_minimal())
 
@@ -100,7 +110,8 @@ ggplot(aes(x = created_at, y = favorite_count), data = thp) + geom_point()
 # nombre de retweet en fonction du temps
 ggplot(aes(x = created_at, y = retweet_count), data = thp) + geom_point(aes(colour = bord_politique, size = favorite_count))
 
-# somme rt et fav sur par moisggplot(data = thp, aes(x = created_at_month, y = rt_fav)) + 
+# somme rt et fav sur par mois
+ggplot(data = thp, aes(x = created_at_month, y = rt_fav)) + 
   geom_bar(aes(fill = bord_politique), stat = "identity")
 
 # problème
@@ -123,14 +134,18 @@ ggplot(thp, aes(x = created_at, fill = bord_politique)) +
 
 ### Analyse du texte ###
 
-thp_texte <- data_frame(line = 1:nrow(thp), text = thp$text, bord_politique = thp$bord_politique) 
+thp$text2 <- Unaccent(thp$text)
 
-stopwords_twitter <- c("t.co", "https", "c'est")
+thp_texte <- data_frame(line = 1:nrow(thp), text2 = thp$text2, bord_politique = thp$bord_politique) 
+
+stopwords_twitter <- c("t.co", "https", "c'est", "migratoire", "migrant", "france", "l'immigration", "immigration", "l`immigration", "pays", "migrants", "l\`immigration", "migratoires", "limmigration", "faut", "faire", "devons")
 
 tidytext <- thp_texte %>%
-  unnest_tokens(word, text) %>%
+  unnest_tokens(word, text2) %>%
   filter(!word %in% c(stopwords_twitter, stopwords_iso$fr)) %>%
-  count(word, sort = TRUE) 
+  count(word, sort = TRUE)
+
+colnames(tidytext)
 
 summary(tidytext)
 
@@ -149,13 +164,18 @@ replace_reg <- "https://t.co/[A-Za-z\\d]+|http://[A-Za-z\\d]+|&amp;|&lt;|&gt;|RT
 unnest_reg <- "([^A-Za-z_\\d#@']|'(?![A-Za-z_\\d#@]))"
 
 tidy_tweets <- thp %>% 
-  filter(!str_detect(text, "^RT")) %>%
-  mutate(text = str_replace_all(text, replace_reg, "")) %>%
-  unnest_tokens(word, text, token = "regex", pattern = unnest_reg) %>%
+  #filter(!str_detect(text2, "^RT")) %>%
+  filter(!str_detect(text2, paste(c("^RT", "^@", "^#"),collapse = '|'))) %>%
+  mutate(text2 = str_replace_all(text2, replace_reg, "")) %>%
+  unnest_tokens(word, text2, token = "regex", pattern = unnest_reg) %>%
   filter(!word %in% c(stopwords_twitter, stopwords_iso$fr),
          str_detect(word, "[a-z]"))
 
+colnames(thp)
+colnames(tidy_tweets)
+
 frequency <- tidy_tweets %>% 
+  filter(!str_detect(word, paste(c("^@", "^#"), collapse = "|"))) %>%
   group_by(bord_politique) %>% 
   count(word, sort = TRUE) %>% 
   left_join(tidy_tweets %>% 
@@ -167,6 +187,62 @@ frequency <- frequency %>%
   select(bord_politique, word, freq) %>% 
   spread(bord_politique, freq)
 
+### NUAGE DE MOTS ###
+
+## GENERAL ##
+
+frequency_2 <- tidy_tweets %>% 
+  filter(!str_detect(word, paste(c("^@", "^#"), collapse = "|"))) %>%
+  count(word, sort = TRUE) 
+
+wordcloud(words = frequency_2$word, freq = frequency_2$n, colors=brewer.pal(8, "Dark2"), max.words = 50)
+
+## EXTREME GAUCHE ##
+
+frequency_extreme_gauche <- frequency %>%
+  select(word, Extrême_gauche) %>%
+  na.omit() %>%
+  arrange(desc(Extrême_gauche))
+
+wordcloud(words = frequency_extreme_gauche$word, freq = frequency_extreme_gauche$Extrême_gauche, colors=brewer.pal(8, "Dark2"), max.words = 50)
+
+## GAUCHE ##
+
+frequency_gauche <- frequency %>%
+  select(word, Gauche) %>%
+  na.omit() %>%
+  arrange(desc(Gauche))
+
+wordcloud(words = frequency_gauche$word, freq = frequency_gauche$Gauche, colors=brewer.pal(8, "Dark2"), max.words = 50)
+
+## GVT ##
+
+frequency_gvt <- frequency %>%
+  select(word, Gouvernement) %>%
+  na.omit() %>%
+  arrange(desc(Gouvernement))
+
+wordcloud(words = frequency_gvt$word, freq = frequency_gvt$Gouvernement, colors=brewer.pal(8, "Dark2"), max.words = 50)
+
+## DROITE ##
+
+frequency_droite <- frequency %>%
+  select(word, Droite) %>%
+  na.omit() %>%
+  arrange(desc(Droite))
+
+wordcloud(words = frequency_droite$word, freq = frequency_droite$Droite, colors=brewer.pal(8, "Dark2"), max.words = 50)
+
+## EXTREME DROITE ##
+
+frequency_extreme_droite <- frequency %>%
+  select(word, Extrême_droite) %>%
+  na.omit() %>%
+  arrange(desc(Extrême_droite))
+
+wordcloud(words = frequency_extreme_droite$word, freq = frequency_extreme_droite$Extrême_droite, colors=brewer.pal(8, "Dark2"), max.words = 50)
+
+### COMPARAISON BORDS POLITIQUE ###
 
 ggplot(frequency, aes(Gouvernement, Extrême_droite)) +
   geom_jitter(alpha = 0.1, size = 2.5, width = 0.25, height = 0.25) +
@@ -175,9 +251,22 @@ ggplot(frequency, aes(Gouvernement, Extrême_droite)) +
   scale_y_log10(labels = percent_format()) +
   geom_abline(color = "red")
 
+ggplot(frequency, aes(Extrême_gauche, Extrême_droite)) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.25, height = 0.25) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  geom_abline(color = "red")
+
+ggplot(frequency, aes(Extrême_gauche, Gouvernement)) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.25, height = 0.25) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  geom_abline(color = "red")
 
 word_ratios <- tidy_tweets %>%
-  filter(!str_detect(word, "^@")) %>%
+  filter(!str_detect(word, paste(c("^RT", "^@", "^#"),collapse = '|'))) %>%
   filter(bord_politique %in% c("Gauche", "Extrême_gauche", "Droite", "Extrême_droite")) %>%
   count(word, bord_politique) %>%
   filter(sum(n) >= 10) %>%
